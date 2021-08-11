@@ -184,10 +184,14 @@ func startPostgresProcess(port int, listen StartListenType, invoker constants.In
 		"-c", "work-mem=64kB",
 		"-c", "jit=off",
 		// postgres log collection
-		"-c", "log_statement=all",
-		"-c", "log_min_duration_statement=2000",
-		"-c", "logging_collector=on",
-		"-c", "log_min_error_statement=error",
+		"-c", "log_connections=on",
+		"-c", "log_disconnections=on",
+		"-c", "log_min_duration_statement=0", // log all statements, including duration
+		"-c", "log_destination=stderr,csvlog", //log to csv and text
+		"-c", "logging_collector=on", // required for csv...
+		//"-c", "log_statement=all",
+		//"-c", "log_min_duration_statement=2000",
+		//"-c", "log_min_error_statement=error",
 		"-c", fmt.Sprintf("log_directory=%s", constants.LogDir()),
 		"-c", fmt.Sprintf("log_filename=%s", "database-%Y-%m-%d.log"),
 
