@@ -322,6 +322,17 @@ func installSteampipeDatabaseAndUser(steampipePassword string, rootPassword stri
 
 		// Allow steampipe the privileges of steampipe_users.
 		`grant steampipe_users to steampipe`,
+
+		// VH hack
+		// `create user vhadianto`,
+
+		// // Set a random, complex password for the steampipe user. Done as a separate
+		// // step from the create for clarity and reuse.
+		// // TODO: need a complex random password here, that is available for sharing with the user when the do steampipe service
+		// fmt.Sprintf(`alter user vhadianto with password '%s'`, "b1ea-4806-b300"),
+
+		// // Allow steampipe the privileges of steampipe_users.
+		// `grant steampipe_users to vhadianto`,
 	}
 
 	for _, statement := range statements {
