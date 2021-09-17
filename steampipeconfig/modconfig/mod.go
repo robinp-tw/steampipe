@@ -271,6 +271,21 @@ func (m *Mod) String() string {
 	if m.Version != nil {
 		versionString = fmt.Sprintf("\nVersion: %s", types.SafeString(m.Version))
 	}
+	var requiresStrings []string
+	var requiresString string
+	if m.Requires != nil {
+		if m.Requires.Steampipe != "" {
+			requiresStrings = append(requiresStrings, fmt.Sprintf("Steampipe %s", m.Requires.Steampipe))
+		}
+		for _, m := range m.Requires.Mods {
+			requiresStrings = append(requiresStrings, m.String())
+		}
+		for _, p := range m.Requires.Plugins {
+			requiresStrings = append(requiresStrings, p.String())
+		}
+		requiresString = fmt.Sprintf("Requires: \n%s", strings.Join(requiresStrings, "\n"))
+	}
+
 	return fmt.Sprintf(`Name: %s
 Title: %s
 Description: %s 
@@ -280,6 +295,7 @@ Queries:
 Controls: 
 %s
 Benchmarks: 
+%s
 %s`,
 		m.FullName,
 		types.SafeString(m.Title),
@@ -288,6 +304,7 @@ Benchmarks:
 		strings.Join(queryStrings, "\n"),
 		strings.Join(controlStrings, "\n"),
 		strings.Join(benchmarkStrings, "\n"),
+		requiresString,
 	)
 }
 
