@@ -22,10 +22,6 @@ type ParsedResourceName struct {
 	Name     string
 }
 
-func (m *ParsedResourceName) TypeString() string {
-	return string(m.ItemType)
-}
-
 type ParsedPropertyPath struct {
 	Mod          string
 	ItemType     string

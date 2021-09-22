@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
+
+	"github.com/hashicorp/hcl/v2/gohcl"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -48,7 +52,45 @@ func ParseHclFiles(fileData map[string][]byte) (hcl.Body, hcl.Diagnostics) {
 	return hcl.MergeFiles(parsedConfigFiles), diags
 }
 
-// ParseMod parses all source hcl files for the mod path and associated resources, and returns the mod object
+// ParseModDefinition parses the modfile only
+func ParseModDefinition(modPath string) (*modconfig.Mod, error) {
+	// TODO think about variables
+
+	// if there is no mod at this location, return error
+	modFilePath := filepath.Join(modPath, "mod.sp")
+	if _, err := os.Stat(modPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("no mod file found in %s", modPath)
+	}
+	fileData, diags := LoadFileData(modFilePath)
+	if diags.HasErrors() {
+		return nil, plugin.DiagsToError("Failed to load mod files", diags)
+	}
+
+	body, diags := ParseHclFiles(fileData)
+	if diags.HasErrors() {
+		return nil, plugin.DiagsToError("Failed to load all mod source files", diags)
+	}
+
+	content, moreDiags := body.Content(ModBlockSchema)
+	if moreDiags.HasErrors() {
+		diags = append(diags, moreDiags...)
+		return nil, plugin.DiagsToError("Failed to load mod", diags)
+	}
+
+	for _, block := range content.Blocks {
+		if block.Type == modconfig.BlockTypeMod {
+			mod := modconfig.NewMod(block.Labels[0], modPath, block.DefRange)
+			diags := gohcl.DecodeBody(block.Body, nil, mod)
+			if diags.HasErrors() {
+				return nil, plugin.DiagsToError("Failed to decode mod hcl file", diags)
+			}
+			return mod, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no mod definition found in %s", modPath)
+}
+
 func ParseMod(modPath string, fileData map[string][]byte, pseudoResources []modconfig.MappableResource, opts *ParseModOptions) (*modconfig.Mod, error) {
 	body, diags := ParseHclFiles(fileData)
 	if diags.HasErrors() {
@@ -61,11 +103,8 @@ func ParseMod(modPath string, fileData map[string][]byte, pseudoResources []modc
 		return nil, plugin.DiagsToError("Failed to load mod", diags)
 	}
 
-	// maps to store the parse resources
-	var mod *modconfig.Mod
-
 	// get names of all resources defined in hcl which may also be created as pseudo resources
-	hclResources, mod, err := loadShellModAndMappableResourceNames(modPath, content, mod)
+	hclResources, mod, err := loadShellModAndMappableResourceNames(modPath, content)
 	if err != nil {
 		return nil, err
 	}
@@ -100,10 +139,13 @@ func ParseMod(modPath string, fileData map[string][]byte, pseudoResources []modc
 		opts.RunCtx = runCtx
 	}
 
-	// set the current mod
-	opts.RunCtx.CurrentMod = mod
-	// add this mod to run context
-	opts.RunCtx.AddMod(mod)
+	// if this mod is NOT the root mod, add to run context
+	if mod.FilePath != opts.RunCtx.CurrentMod.FilePath {
+		// set the current mod
+		opts.RunCtx.CurrentMod = mod
+		// add this mod to run context
+		opts.RunCtx.AddMod(mod)
+	}
 
 	// perform initial decode to get dependencies
 	// (if there are no depdnencies, this is all that is needed)
@@ -156,7 +198,8 @@ func addPseudoResourcesToMod(pseudoResources []modconfig.MappableResource, hclRe
 
 // get names of all resources defined in hcl which may also be created as pseudo resources
 // if we find a mod block, build a shell mod
-func loadShellModAndMappableResourceNames(modPath string, content *hcl.BodyContent, mod *modconfig.Mod) (map[string]bool, *modconfig.Mod, error) {
+func loadShellModAndMappableResourceNames(modPath string, content *hcl.BodyContent) (map[string]bool, *modconfig.Mod, error) {
+	var mod *modconfig.Mod
 	hclResources := make(map[string]bool)
 
 	for _, block := range content.Blocks {
@@ -168,6 +211,7 @@ func loadShellModAndMappableResourceNames(modPath string, content *hcl.BodyConte
 				return nil, nil, fmt.Errorf("more than 1 mod definition found in %s", modPath)
 			}
 			mod = modconfig.NewMod(block.Labels[0], modPath, block.DefRange)
+
 		case modconfig.BlockTypeQuery:
 			// for any mappable resource, store the resource name
 			name := modconfig.BuildModResourceName(block.Type, block.Labels[0])
