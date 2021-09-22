@@ -93,6 +93,11 @@ func (b *Benchmark) CtyValue() (cty.Value, error) {
 	return getCtyValue(b)
 }
 
+// GetDeclRange implements HclResource
+func (b *Benchmark) GetDeclRange() *hcl.Range {
+	return &b.DeclRange
+}
+
 // OnDecoded implements HclResource
 func (b *Benchmark) OnDecoded(block *hcl.Block) hcl.Diagnostics {
 	var res hcl.Diagnostics
@@ -128,6 +133,11 @@ func (b *Benchmark) AddReference(reference string) {
 // SetMod implements HclResource
 func (b *Benchmark) SetMod(mod *Mod) {
 	b.Mod = mod
+}
+
+// GetMod implements HclResource
+func (b *Benchmark) GetMod() *Mod {
+	return b.Mod
 }
 
 func (b *Benchmark) String() string {
