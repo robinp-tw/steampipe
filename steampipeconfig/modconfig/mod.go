@@ -65,7 +65,7 @@ type Mod struct {
 	metadata *ResourceMetadata
 }
 
-func NewMod(shortName, filePath string, defRange hcl.Range) *Mod {
+func NewMod(shortName, modPath string, defRange hcl.Range) *Mod {
 	return &Mod{
 		ShortName:  shortName,
 		FullName:   fmt.Sprintf("mod.%s", shortName),
@@ -76,7 +76,7 @@ func NewMod(shortName, filePath string, defRange hcl.Range) *Mod {
 		Panels:     make(map[string]*Panel),
 		Variables:  make(map[string]*Variable),
 		Locals:     make(map[string]*Local),
-		FilePath:   filePath,
+		FilePath:   modPath,
 		DeclRange:  defRange,
 	}
 }
