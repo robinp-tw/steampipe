@@ -260,13 +260,6 @@ func (w *Workspace) loadWorkspaceMod() error {
 	// clear all resource maps
 	w.reset()
 
-	inputVariables, err := w.getAllVariables()
-	if err != nil {
-		return err
-	}
-
-	w.Variables = inputVariables
-
 	// build options used to load workspace
 	// set flags to create pseudo resources and a default mod if needed
 	opts := parse.NewParseModOptions(
@@ -291,6 +284,7 @@ func (w *Workspace) loadWorkspaceMod() error {
 	w.Benchmarks = w.buildBenchmarkMap(opts.LoadedDependencyMods)
 	w.Reports = w.buildReportMap(opts.LoadedDependencyMods)
 	w.Panels = w.buildPanelMap(opts.LoadedDependencyMods)
+	//w.Variables = w.buildVariableMap(opts.LoadedDependencyMods)
 	// todo what to  key mod map with
 	w.Mods = opts.LoadedDependencyMods
 
