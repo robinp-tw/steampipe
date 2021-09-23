@@ -24,8 +24,9 @@ import (
 )
 
 type Workspace struct {
-	Path string
-	Mod  *modconfig.Mod
+	Path                string
+	ModInstallationPath string
+	Mod                 *modconfig.Mod
 
 	// maps of mod resources from this mod and ALL DEPENDENCIES, keyed by long and short names
 	Queries    map[string]*modconfig.Query
@@ -54,7 +55,8 @@ func Load(workspacePath string) (*Workspace, error) {
 
 	// create shell workspace
 	workspace := &Workspace{
-		Path: workspacePath,
+		Path:                workspacePath,
+		ModInstallationPath: constants.WorkspaceModPath(workspacePath),
 	}
 
 	// determine whether to load files recursively or just from the top level folder
@@ -259,36 +261,49 @@ func (w *Workspace) setListFlag() {
 func (w *Workspace) loadWorkspaceMod() error {
 	// clear all resource maps
 	w.reset()
+	// load and evaluate all variables
+	inputVariables, err := w.getAllVariables()
+	if err != nil {
+		return err
+	}
+	// set variables map on workspace
+	w.Variables = inputVariables
 
 	// build options used to load workspace
-	// set flags to create pseudo resources and a default mod if needed
-	opts := parse.NewParseModOptions(
-		parse.CreatePseudoResources|parse.CreateDefaultMod,
-		&filehelpers.ListOptions{
-			// listFlag specifies whether to load files recursively
-			Flags:   w.listFlag,
-			Exclude: w.exclusions,
-		})
-	opts.ModInstallationPath = constants.WorkspaceModPath(w.Path)
+	opts := w.getLoadModOptions()
+	// add variables to runcontext
 	opts.RunCtx.AddVariables(w.VariableValueMap())
-
 	m, err := steampipeconfig.LoadMod(w.Path, opts)
 	if err != nil {
 		return err
 	}
 
+	// now set workspace properties
 	w.Mod = m
-
 	w.Queries = w.buildQueryMap(opts.LoadedDependencyMods)
 	w.Controls = w.buildControlMap(opts.LoadedDependencyMods)
 	w.Benchmarks = w.buildBenchmarkMap(opts.LoadedDependencyMods)
 	w.Reports = w.buildReportMap(opts.LoadedDependencyMods)
 	w.Panels = w.buildPanelMap(opts.LoadedDependencyMods)
-	//w.Variables = w.buildVariableMap(opts.LoadedDependencyMods)
-	// todo what to  key mod map with
+
+	// todo what to key mod map with
 	w.Mods = opts.LoadedDependencyMods
 
 	return nil
+}
+
+// build options used to load workspace
+// set flags to create pseudo resources and a default mod if needed
+func (w *Workspace) getLoadModOptions() *parse.ParseModOptions {
+	opts := parse.NewParseModOptions(
+		parse.CreatePseudoResources|parse.CreateDefaultMod,
+		w.ModInstallationPath,
+		&filehelpers.ListOptions{
+			// listFlag specifies whether to load files recursively
+			Flags:   w.listFlag,
+			Exclude: w.exclusions,
+		})
+	return opts
 }
 
 func (w *Workspace) VariableValueMap() map[string]cty.Value {
