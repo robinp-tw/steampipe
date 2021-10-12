@@ -74,13 +74,13 @@ func (e *ExecutionTree) AddControl(control *modconfig.Control, group *ResultGrou
 	}
 }
 
-func (e *ExecutionTree) Execute(ctx context.Context, client db_common.Client) int {
+func (e *ExecutionTree) Execute(ctx context.Context, clientPool *db_common.ClientPool) int {
 	log.Println("[TRACE]", "begin ExecutionTree.Execute")
 	defer log.Println("[TRACE]", "end ExecutionTree.Execute")
 	e.progress.Start()
 	defer e.progress.Finish()
 	// just execute the root - it will traverse the tree
-	errors := e.Root.Execute(ctx, client)
+	errors := e.Root.Execute(ctx, clientPool)
 	// now build map of dimension property name to property value to color map
 	e.DimensionColorGenerator, _ = NewDimensionColorGenerator(4, 27)
 	e.DimensionColorGenerator.populate(e)

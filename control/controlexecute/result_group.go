@@ -3,12 +3,13 @@ package controlexecute
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
-	"github.com/turbot/steampipe/db/db_common"
-
 	"github.com/spf13/viper"
+	"github.com/turbot/go-kit/helpers"
 	"github.com/turbot/steampipe/constants"
+	"github.com/turbot/steampipe/db/db_common"
 	"github.com/turbot/steampipe/steampipeconfig/modconfig"
 )
 
@@ -31,6 +32,8 @@ type ResultGroup struct {
 	GroupItem modconfig.ModTreeItem `json:"-"`
 	Parent    *ResultGroup          `json:"-"`
 	Duration  time.Duration         `json:"-"`
+
+	updateLock *sync.Mutex
 }
 
 type GroupSummary struct {
@@ -40,9 +43,10 @@ type GroupSummary struct {
 // NewRootResultGroup creates a ResultGroup to act as the root node of a control execution tree
 func NewRootResultGroup(executionTree *ExecutionTree, rootItems ...modconfig.ModTreeItem) *ResultGroup {
 	root := &ResultGroup{
-		GroupId: RootResultGroupName,
-		Groups:  []*ResultGroup{},
-		Tags:    make(map[string]string),
+		GroupId:    RootResultGroupName,
+		Groups:     []*ResultGroup{},
+		Tags:       make(map[string]string),
+		updateLock: &sync.Mutex{},
 	}
 	for _, item := range rootItems {
 		// if root item is a benchmark, create new result group with root as parent
@@ -68,6 +72,7 @@ func NewResultGroup(executionTree *ExecutionTree, treeItem modconfig.ModTreeItem
 		GroupItem:   treeItem,
 		Parent:      parent,
 		Groups:      []*ResultGroup{},
+		updateLock:  &sync.Mutex{},
 	}
 	// add child groups for children which are benchmarks
 	for _, c := range treeItem.GetChildren() {
@@ -103,11 +108,16 @@ func (r *ResultGroup) PopulateGroupMap(groupMap map[string]*ResultGroup) {
 // AddResult adds a result to the list, updates the summary status
 // (this also updates the status of our parent, all the way up the tree)
 func (r *ResultGroup) AddResult(run *ControlRun) {
+	r.updateLock.Lock()
+	defer r.updateLock.Unlock()
 	r.ControlRuns = append(r.ControlRuns, run)
 
 }
 
 func (r *ResultGroup) updateSummary(summary StatusSummary) {
+	r.updateLock.Lock()
+	defer r.updateLock.Unlock()
+
 	r.Summary.Status.Skip += summary.Skip
 	r.Summary.Status.Alarm += summary.Alarm
 	r.Summary.Status.Info += summary.Info
@@ -119,6 +129,9 @@ func (r *ResultGroup) updateSummary(summary StatusSummary) {
 }
 
 func (r *ResultGroup) updateSeverityCounts(severity string, summary StatusSummary) {
+	r.updateLock.Lock()
+	defer r.updateLock.Unlock()
+
 	if r.Severity == nil {
 		r.Severity = make(map[string]StatusSummary)
 	}
@@ -138,7 +151,7 @@ func (r *ResultGroup) updateSeverityCounts(severity string, summary StatusSummar
 	}
 }
 
-func (r *ResultGroup) Execute(ctx context.Context, client db_common.Client) int {
+func (r *ResultGroup) Execute(ctx context.Context, clientPool *db_common.ClientPool) int {
 	log.Printf("[TRACE] begin ResultGroup.Execute: %s\n", r.GroupId)
 	defer log.Printf("[TRACE] end ResultGroup.Execute: %s\n", r.GroupId)
 
@@ -157,14 +170,27 @@ func (r *ResultGroup) Execute(ctx context.Context, client db_common.Client) int 
 			if viper.GetBool(constants.ArgDryRun) {
 				controlRun.Skip()
 			} else {
-				controlRun.Start(ctx, client)
-				failures += controlRun.Summary.Alarm
-				failures += controlRun.Summary.Error
+				c, err := clientPool.Borrow(ctx)
+				if err != nil {
+					controlRun.SetError(err)
+				} else {
+					go func() {
+						defer func() {
+							if r := recover(); r != nil {
+								controlRun.SetError(helpers.ToError(r))
+							}
+							clientPool.Return(ctx, c)
+						}()
+						controlRun.Start(ctx, *c)
+						failures += controlRun.Summary.Alarm
+						failures += controlRun.Summary.Error
+					}()
+				}
 			}
 		}
 	}
 	for _, child := range r.Groups {
-		failures += child.Execute(ctx, client)
+		failures += child.Execute(ctx, clientPool)
 	}
 
 	r.Duration = time.Since(startTime)

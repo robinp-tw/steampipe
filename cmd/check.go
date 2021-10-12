@@ -26,9 +26,10 @@ import (
 )
 
 type checkInitData struct {
-	ctx           context.Context
-	workspace     *workspace.Workspace
-	client        db_common.Client
+	ctx       context.Context
+	workspace *workspace.Workspace
+	// client        db_common.Client
+	clientPool    *db_common.ClientPool
 	dbInitialised bool
 	result        *db_common.InitResult
 }
@@ -101,13 +102,11 @@ func runCheckCmd(cmd *cobra.Command, args []string) {
 		if r := recover(); r != nil {
 			utils.ShowError(helpers.ToError(r))
 		}
-
-		if initData.client != nil {
-			initData.client.Close()
-		}
 		if initData.workspace != nil {
 			initData.workspace.Close()
-
+		}
+		if initData.clientPool != nil {
+			initData.clientPool.Close(context.Background())
 		}
 	}()
 
@@ -125,7 +124,6 @@ func runCheckCmd(cmd *cobra.Command, args []string) {
 	// pull out useful properties
 	ctx := initData.ctx
 	workspace := initData.workspace
-	client := initData.client
 	failures := 0
 	var exportErrors []error
 	exportErrorsLock := sync.Mutex{}
@@ -146,12 +144,18 @@ func runCheckCmd(cmd *cobra.Command, args []string) {
 		exportFormats, err := getExportTargets(arg)
 		utils.FailOnError(err)
 
+		// get a client from the pool
+		client, err := initData.clientPool.Borrow(ctx)
+		utils.FailOnErrorWithMessage(err, "failed to resolve resolve client from pool")
+
 		// create the execution tree
-		executionTree, err := controlexecute.NewExecutionTree(ctx, workspace, client, arg)
+		executionTree, err := controlexecute.NewExecutionTree(ctx, workspace, *client, arg)
 		utils.FailOnErrorWithMessage(err, "failed to resolve controls from argument")
+		fmt.Println("exec tre created")
+		initData.clientPool.Return(ctx, client)
 
 		// execute controls synchronously (execute returns the number of failures)
-		failures += executionTree.Execute(ctx, client)
+		failures += executionTree.Execute(ctx, initData.clientPool)
 		err = displayControlResults(ctx, executionTree)
 		utils.FailOnError(err)
 
@@ -220,44 +224,65 @@ func initialiseCheck() *checkInitData {
 		initData.result.AddWarnings("no controls found in current workspace")
 	}
 
-	// get a client
-	var client db_common.Client
-	if connectionString := viper.GetString(constants.ArgConnectionString); connectionString != "" {
-		client, err = db_client.NewDbClient(connectionString)
-	} else {
-		client, err = db_local.GetLocalClient(constants.InvokerCheck)
-	}
-
-	if err != nil {
+	if err := initClientPool(initData); err != nil {
 		initData.result.Error = err
-		return initData
 	}
-	initData.client = client
-
-	refreshResult := initData.client.RefreshConnectionAndSearchPaths()
-	if refreshResult.Error != nil {
-		initData.result.Error = refreshResult.Error
-		return initData
-	}
-	initData.result.AddWarnings(refreshResult.Warnings...)
-
-	// setup the session data - prepared statements and introspection tables
-	// create session data source - for check command, we create prepared statements for ALL queries
-	sessionDataSource := workspace.NewSessionDataSource(initData.workspace.GetResourceMaps())
-	err = workspace.EnsureSessionData(context.Background(), sessionDataSource, initData.client)
-	if err != nil {
-		initData.result.Error = err
-		return initData
-	}
-
-	// register EnsureSessionData as a callback on the client.
-	// if the underlying SQL client has certain errors (for example context expiry) it will reset the session
-	// so our client object calls this callback to restore the session data
-	initData.client.SetEnsureSessionDataFunc(func(ctx context.Context, client db_common.Client) error {
-		return workspace.EnsureSessionData(ctx, sessionDataSource, client)
-	})
 
 	return initData
+}
+
+func initClientPool(initData *checkInitData) error {
+	factory := func(context.Context) (*db_common.Client, error) {
+		fmt.Println("invoked factory")
+		defer fmt.Println("done in factory")
+
+		var client db_common.Client
+		var err error
+		if connectionString := viper.GetString(constants.ArgConnectionString); connectionString != "" {
+			client, err = db_client.NewDbClient(connectionString)
+		} else {
+			client, err = db_local.GetLocalClient(constants.InvokerCheck)
+		}
+
+		fmt.Println("client created")
+
+		if err != nil {
+			return nil, err
+		}
+
+		fmt.Println("refreshing")
+		refreshResult := client.RefreshConnectionAndSearchPaths()
+		if refreshResult.Error != nil {
+			return nil, refreshResult.Error
+		}
+
+		fmt.Println("ensure")
+		// setup the session data - prepared statements and introspection tables
+		// create session data source - for check command, we create prepared statements for ALL queries
+		sessionDataSource := workspace.NewSessionDataSource(initData.workspace.GetResourceMaps())
+		err = workspace.EnsureSessionData(context.Background(), sessionDataSource, client)
+		if err != nil {
+			return nil, err
+		}
+
+		// register EnsureSessionData as a callback on the client.
+		// if the underlying SQL client has certain errors (for example context expiry) it will reset the session
+		// so our client object calls this callback to restore the session data
+		client.SetEnsureSessionDataFunc(func(ctx context.Context, client db_common.Client) error {
+			return workspace.EnsureSessionData(ctx, sessionDataSource, client)
+		})
+
+		return &client, nil
+	}
+
+	initData.clientPool = db_common.NewClientPool(db_common.ClientPoolConfig{
+		Capacity: 4,
+		Factory:  factory,
+		OnClose: func(ctx context.Context, obj *db_common.Client) error {
+			return nil
+		},
+	})
+	return nil
 }
 
 func handleCheckInitResult(initData *checkInitData) bool {
