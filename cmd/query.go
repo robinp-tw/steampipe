@@ -94,13 +94,6 @@ func runQueryCmd(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-	//client, err := plugin_manager.GetPluginManager()
-	//utils.FailOnError(err)
-	//res, err := client.Get(&pb.GetRequest{Connection: "aws"})
-	//utils.FailOnError(err)
-	//fmt.Println(res)
-	//return
-
 	if stdinData := getPipedStdinData(); len(stdinData) > 0 {
 		args = append(args, stdinData)
 	}
