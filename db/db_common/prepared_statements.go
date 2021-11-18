@@ -35,6 +35,11 @@ func CreatePreparedStatements(ctx context.Context, resourceMaps *modconfig.Works
 	if err != nil {
 		for name, sql := range sqlMap {
 			if _, err = client.ExecuteSync(ctx, sql, true); err != nil {
+				s := fmt.Sprintf("%v", err)
+				if strings.Contains(s, "prepared statement") && strings.Contains(s, "already exists") {
+					// Successful creation in previous batch.
+					continue
+				}
 				return fmt.Errorf("failed to create prepared statement for %s: %v", name, err)
 			}
 		}
