@@ -33,16 +33,23 @@ func CreatePreparedStatements(ctx context.Context, resourceMaps *modconfig.Works
 
 	// if there was an error - we would like to know which query or control failed, so try to create them one by one
 	if err != nil {
+		the_err := err
+		the_bad := "?"
+		log.Printf("[WARN] There was some error %v", err)
 		for name, sql := range sqlMap {
 			if _, err = client.ExecuteSync(ctx, sql, true); err != nil {
 				s := fmt.Sprintf("%v", err)
 				if strings.Contains(s, "prepared statement") && strings.Contains(s, "already exists") {
+					log.Printf("[WARN] skipping [%s]", s)
 					// Successful creation in previous batch.
 					continue
 				}
-				return fmt.Errorf("failed to create prepared statement for %s: %v", name, err)
+				the_err = err
+				the_bad = name
+				log.Printf("[WARN] error %v in %v", the_err, the_bad)
 			}
 		}
+		return fmt.Errorf("failed to create prepared statement for %s: %v", the_bad, the_err)
 	}
 
 	// return context error - this enables calling code to respond to cancellation
@@ -86,7 +93,7 @@ func GetPreparedStatementsSQL(resourceMaps *modconfig.WorkspaceResourceMaps) map
 
 // UpdatePreparedStatements first attempts to deallocate all prepared statements in workspace, then recreates them
 func UpdatePreparedStatements(ctx context.Context, prevResourceMaps, currentResourceMaps *modconfig.WorkspaceResourceMaps, client Client) error {
-	log.Printf("[TRACE] UpdatePreparedStatements")
+	log.Printf("[WARN] UpdatePreparedStatements")
 
 	utils.LogTime("db.UpdatePreparedStatements start")
 	defer utils.LogTime("db.UpdatePreparedStatements end")
@@ -112,11 +119,13 @@ func UpdatePreparedStatements(ctx context.Context, prevResourceMaps, currentReso
 	}
 
 	// execute the query, passing 'true' to disable the spinner
-	s := strings.Join(sql, "\n")
-	_, err := client.ExecuteSync(ctx, s, true)
-	if err != nil {
-		log.Printf("[TRACE] failed to update prepared statements - deallocate returned error %v", err)
-		return err
+	for _, s := range sql {
+		_, err := client.ExecuteSync(ctx, s, true)
+		if err != nil {
+			log.Printf("[WARN] failed to update prepared statements - deallocate returned error %v", err)
+			// Don't return, give a chance to re-create the statements.
+			// return err
+		}
 	}
 
 	// now recreate them
